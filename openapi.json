@@ -516,7 +516,7 @@
       }
     },
     "/sdk/v1/update-username": {
-      "patch": {
+      "post": {
         "summary": "Update username for a user",
         "tags": ["User Accounts"],
         "requestBody": {

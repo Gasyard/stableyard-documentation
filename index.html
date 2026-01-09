@@ -877,11 +877,18 @@
             filter: false,
             showExtensions: true,
             showCommonExtensions: true,
+            withCredentials: false,
             requestInterceptor: (req) => {
-              const { sdkKey } = loadAuth();
+              // Get SDK key from input field directly (most current value)
+              const sdkKey = sdkKeyInput?.value?.trim() || loadAuth().sdkKey;
               if (sdkKey) {
                 req.headers["x-sdk-key"] = sdkKey;
               }
+              // Ensure Content-Type is set for POST/PUT/PATCH
+              if (["POST", "PUT", "PATCH"].includes(req.method)) {
+                req.headers["Content-Type"] = "application/json";
+              }
+              console.log("Request headers:", req.headers);
               return req;
             },
           });
