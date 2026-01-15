@@ -82,11 +82,15 @@
       },
       "CheckUsernameResponse": {
         "type": "object",
-        "required": ["message"],
+        "required": ["message", "userNameExists"],
         "properties": {
           "message": {
             "type": "string",
             "enum": ["username already exists", "username available"]
+          },
+          "userNameExists": {
+            "type": "boolean",
+            "description": "True if username exists, false if available"
           }
         }
       },
@@ -380,11 +384,11 @@
       },
       "SettleTransactionRequest": {
         "type": "object",
-        "required": ["payload"],
+        "description": "Payment data object. Can be the full payload with authorization, signature, domain, types, or a simplified object with payment details.",
         "properties": {
           "payload": {
             "type": "object",
-            "required": ["authorization", "signature", "domain", "types"],
+            "description": "Full EIP-712 payload (optional, if provided must include authorization, signature, domain, types)",
             "properties": {
               "authorization": {
                 "type": "object",
@@ -450,22 +454,11 @@
               }
             }
           }
-        },
-        "description": "Payment data with EIP-712 typed data signature. The authorization contains payment details, and must be signed by the sender."
+        }
       },
       "SettleTransactionResponse": {
-        "type": "object",
-        "required": ["redeemTxHash", "offchainOrderID"],
-        "properties": {
-          "redeemTxHash": {
-            "type": "string",
-            "description": "Transaction hash of the USDC redemption from vault"
-          },
-          "offchainOrderID": {
-            "type": "string",
-            "description": "Order ID for the cross-chain offchain transaction"
-          }
-        }
+        "type": "string",
+        "description": "Success message indicating transaction was sent successfully (processing in background)"
       }
     }
   },
@@ -546,7 +539,17 @@
                 "schema": {
                   "allOf": [
                     { "$ref": "#/components/schemas/SDKResponse" },
-                    { "properties": { "message": { "type": "string" } } }
+                    {
+                      "properties": {
+                        "message": { "type": "string" },
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "paymentAddress": { "type": "string" }
+                          }
+                        }
+                      }
+                    }
                   ]
                 }
               }
@@ -660,8 +663,8 @@
           }
         },
         "responses": {
-          "201": {
-            "description": "Vault deployed or existing returned",
+          "200": {
+            "description": "Vault status returned. If proxy module is not deployed, txData is included. If deployed, proxyModuleAddress is included.",
             "headers": {
               "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
             },
@@ -673,13 +676,51 @@
                     {
                       "properties": {
                         "data": {
-                          "$ref": "#/components/schemas/CreateVaultResult"
+                          "oneOf": [
+                            {
+                              "type": "object",
+                              "required": [
+                                "message",
+                                "vaultAddress",
+                                "proxyModuleAddress"
+                              ],
+                              "properties": {
+                                "message": {
+                                  "type": "string",
+                                  "description": "Status message"
+                                },
+                                "vaultAddress": { "type": "string" },
+                                "proxyModuleAddress": { "type": "string" }
+                              }
+                            },
+                            {
+                              "type": "object",
+                              "required": ["message", "vaultAddress", "txData"],
+                              "properties": {
+                                "message": {
+                                  "type": "string",
+                                  "description": "Status message indicating proxy module needs deployment"
+                                },
+                                "vaultAddress": { "type": "string" },
+                                "txData": {
+                                  "type": "object",
+                                  "description": "Transaction data for deploying proxy module"
+                                }
+                              }
+                            }
+                          ]
                         }
                       }
                     }
                   ]
                 }
               }
+            }
+          },
+          "400": {
+            "description": "Vaults are not deployed or missing userId",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
             }
           },
           "404": {
@@ -894,6 +935,7 @@
     "/sdk/v1/get-balance": {
       "post": {
         "summary": "Get Polygon USDC balance in vault",
+        "description": "Get balance for a user. Provide exactly one of userId, paymentAddress, or address (with optional chainType).",
         "tags": ["Vaults"],
         "requestBody": {
           "required": true,
@@ -958,8 +1000,11 @@
                 "properties": {
                   "userId": { "type": "string" },
                   "txData": {
-                    "type": "object",
-                    "description": "Safe execTransaction payload object (to, data, operation, ...)"
+                    "oneOf": [
+                      { "type": "object" },
+                      { "type": "string", "description": "JSON string" }
+                    ],
+                    "description": "Safe execTransaction payload object (to, data, operation, ...) or JSON string"
                   },
                   "signature": {
                     "type": "string",
@@ -983,15 +1028,10 @@
                     { "$ref": "#/components/schemas/SDKResponse" },
                     {
                       "properties": {
-                        "data": {
-                          "type": "object",
-                          "properties": {
-                            "moduleAddress": {
-                              "type": "string",
-                              "nullable": true
-                            },
-                            "message": { "type": "string" }
-                          }
+                        "message": { "type": "string" },
+                        "moduleAddress": {
+                          "type": "string",
+                          "nullable": true
                         }
                       }
                     }
@@ -1068,19 +1108,41 @@
     },
     "/sdk/v1/get-transactions": {
       "get": {
-        "summary": "Get transaction history for a user",
+        "summary": "Get paginated transaction history for a user",
+        "description": "Get transaction history. userId can be provided in query or body.",
         "tags": ["User Accounts"],
         "parameters": [
           {
             "name": "userId",
             "in": "query",
-            "required": true,
-            "schema": { "type": "string" }
+            "required": false,
+            "schema": { "type": "string" },
+            "description": "User ID (can also be provided in request body)"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "minimum": 1, "default": 1 },
+            "description": "Page number (default: 1)"
           }
         ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "userId": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Transaction history",
+            "description": "Paginated transaction history",
             "headers": {
               "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
             },
@@ -1092,8 +1154,29 @@
                     {
                       "properties": {
                         "data": {
-                          "type": "array",
-                          "items": { "type": "object" }
+                          "type": "object",
+                          "required": ["transactions", "pagination"],
+                          "properties": {
+                            "transactions": {
+                              "type": "array",
+                              "items": { "type": "object" }
+                            },
+                            "pagination": {
+                              "type": "object",
+                              "required": [
+                                "page",
+                                "limit",
+                                "totalPages",
+                                "totalCount"
+                              ],
+                              "properties": {
+                                "page": { "type": "integer" },
+                                "limit": { "type": "integer" },
+                                "totalPages": { "type": "integer" },
+                                "totalCount": { "type": "integer" }
+                              }
+                            }
+                          }
                         }
                       }
                     }
@@ -1265,7 +1348,7 @@
             }
           },
           "400": {
-            "description": "Invalid payload - userId, partnerId, and amount are required",
+            "description": "Invalid payload - userId, partnerId (string), and amount (number) are required",
             "headers": {
               "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
             },
@@ -1370,14 +1453,9 @@
                     { "$ref": "#/components/schemas/SDKResponse" },
                     {
                       "properties": {
-                        "data": {
-                          "type": "object",
-                          "properties": {
-                            "message": {
-                              "type": "string",
-                              "description": "Success message"
-                            }
-                          }
+                        "message": {
+                          "type": "string",
+                          "description": "Success message"
                         }
                       }
                     }
@@ -1467,6 +1545,7 @@
     "/sdk/v1/settle": {
       "post": {
         "summary": "Settle transaction by redeeming USDC from vault and initiating cross-chain settlement",
+        "description": "Settles a transaction by redeeming USDC from the user's vault and initiating cross-chain settlement. The settlement process runs in the background and returns immediately with a success message.",
         "tags": ["Payments"],
         "requestBody": {
           "required": true,
@@ -1492,7 +1571,8 @@
                     {
                       "properties": {
                         "data": {
-                          "$ref": "#/components/schemas/SettleTransactionResponse"
+                          "type": "string",
+                          "description": "Success message indicating transaction was sent successfully (processing in background)"
                         }
                       }
                     }
@@ -1509,6 +1589,325 @@
           },
           "404": {
             "description": "User not found or missing required addresses (vault/proxy module)",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            }
+          }
+        }
+      }
+    },
+    "/sdk/v1/get-kyc-link": {
+      "get": {
+        "summary": "Get KYC link for a user",
+        "tags": ["KYC"],
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "KYC link retrieved",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/SDKResponse" },
+                    {
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "required": ["link", "ttlInSecs"],
+                          "properties": {
+                            "link": {
+                              "type": "string",
+                              "description": "KYC link URL"
+                            },
+                            "ttlInSecs": {
+                              "type": "integer",
+                              "description": "Time to live in seconds"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing userId",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            }
+          },
+          "404": {
+            "description": "User not found",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            }
+          }
+        }
+      }
+    },
+    "/sdk/v1/get-recent-transactions": {
+      "get": {
+        "summary": "Get recent transactions for a user",
+        "description": "Get recent transactions list. userId can be provided in query or body.",
+        "tags": ["User Accounts"],
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string" },
+            "description": "User ID (can also be provided in request body)"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "userId": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Recent transactions list",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/SDKResponse" },
+                    {
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": { "type": "string" }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing userId",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            }
+          },
+          "404": {
+            "description": "User not found",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            }
+          }
+        }
+      }
+    },
+    "/sdk/v1/get-balances": {
+      "get": {
+        "summary": "Get balances for an address across all supported chains",
+        "description": "Fetches balances for EVM, Solana, and Movement chains. Returns balances with USD values, filtered by minimum amount and sorted by USD value descending.",
+        "tags": ["Payments"],
+        "parameters": [
+          {
+            "name": "userAddress",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "The address to check balances for"
+          },
+          {
+            "name": "amount",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "number", "default": 0 },
+            "description": "Minimum USD amount to filter balances (default: 0)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Balances retrieved successfully",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/SDKResponse" },
+                    {
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "required": [
+                            "address",
+                            "addressType",
+                            "balances",
+                            "totalUsdValue"
+                          ],
+                          "properties": {
+                            "address": { "type": "string" },
+                            "addressType": {
+                              "type": "string",
+                              "enum": ["evm", "solana", "movement"]
+                            },
+                            "balances": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "required": [
+                                  "chainId",
+                                  "chainName",
+                                  "tokenAddress",
+                                  "tokenSymbol",
+                                  "rawValue",
+                                  "decimalValue",
+                                  "decimals",
+                                  "usdValue"
+                                ],
+                                "properties": {
+                                  "chainId": { "type": "integer" },
+                                  "chainName": { "type": "string" },
+                                  "tokenAddress": { "type": "string" },
+                                  "tokenSymbol": { "type": "string" },
+                                  "rawValue": { "type": "string" },
+                                  "decimalValue": { "type": "number" },
+                                  "decimals": { "type": "integer" },
+                                  "usdValue": { "type": "number" }
+                                }
+                              }
+                            },
+                            "totalUsdValue": { "type": "number" }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid address",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            }
+          }
+        }
+      }
+    },
+    "/sdk/v1/get-deposit-address": {
+      "post": {
+        "summary": "Get deposit address and quote from Gasyard API",
+        "description": "Retrieves settlement data from payment address and gets a deposit address quote from Gasyard API for cross-chain transfers.",
+        "tags": ["Payments"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "paymentAddress",
+                  "rawAmount",
+                  "sourceAddress",
+                  "sourceChainId",
+                  "sourceChainToken"
+                ],
+                "properties": {
+                  "paymentAddress": {
+                    "type": "string",
+                    "description": "Payment address in format username@partnerId"
+                  },
+                  "rawAmount": {
+                    "type": "number",
+                    "description": "Amount in raw units (smallest token unit)"
+                  },
+                  "sourceAddress": {
+                    "type": "string",
+                    "description": "Source wallet address"
+                  },
+                  "sourceChainId": {
+                    "type": "integer",
+                    "description": "Source chain ID"
+                  },
+                  "sourceChainToken": {
+                    "type": "string",
+                    "description": "Source token symbol (e.g., 'USDC')"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Deposit address and quote retrieved",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/SDKResponse" },
+                    {
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "depositAddress": { "type": "string" },
+                            "quote": { "type": "object" },
+                            "quoteId": { "type": "string" }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid payload - all fields are required",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            }
+          },
+          "404": {
+            "description": "User not found or invalid payment address",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            }
+          },
+          "500": {
+            "description": "Internal server error or Gasyard API error",
             "headers": {
               "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
             }
