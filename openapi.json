@@ -255,11 +255,11 @@
       },
       "CreateQuoteRequest": {
         "type": "object",
-        "required": ["userId", "partnerId", "amount"],
+        "required": ["partnerId", "amount"],
         "properties": {
           "userId": {
             "type": "string",
-            "description": "User ID of the sender"
+            "description": "User ID of the sender (optional)"
           },
           "partnerId": {
             "type": "string",
@@ -268,6 +268,18 @@
           "amount": {
             "type": "number",
             "description": "Amount to quote"
+          },
+          "sourceAddress": {
+            "type": "string",
+            "description": "Source wallet address (optional)"
+          },
+          "sourceChainId": {
+            "type": "integer",
+            "description": "Source chain ID (optional)"
+          },
+          "sourceChainToken": {
+            "type": "string",
+            "description": "Source token symbol (optional)"
           },
           "destinationUserId": {
             "type": "string",
@@ -932,7 +944,7 @@
         }
       }
     },
-    "/sdk/v1/get-vault-balance": {
+    "/sdk/v1/get-balance": {
       "post": {
         "summary": "Get Polygon USDC balance in vault",
         "description": "Get balance for a user. Provide exactly one of userId, paymentAddress, or address (with optional chainType).",
@@ -1348,7 +1360,7 @@
             }
           },
           "400": {
-            "description": "Invalid payload - userId, partnerId (string), and amount (number) are required",
+            "description": "Invalid payload - partnerId (string) and amount (number) are required",
             "headers": {
               "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
             },
