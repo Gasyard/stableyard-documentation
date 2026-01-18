@@ -932,7 +932,7 @@
         }
       }
     },
-    "/sdk/v1/get-balance": {
+    "/sdk/v1/get-vault-balance": {
       "post": {
         "summary": "Get Polygon USDC balance in vault",
         "description": "Get balance for a user. Provide exactly one of userId, paymentAddress, or address (with optional chainType).",
