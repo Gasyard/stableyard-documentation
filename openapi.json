@@ -255,15 +255,11 @@
       },
       "CreateQuoteRequest": {
         "type": "object",
-        "required": ["partnerId", "amount"],
+        "required": ["amount"],
         "properties": {
           "userId": {
             "type": "string",
             "description": "User ID of the sender (optional)"
-          },
-          "partnerId": {
-            "type": "string",
-            "description": "Partner ID"
           },
           "amount": {
             "type": "number",
@@ -396,75 +392,32 @@
       },
       "SettleTransactionRequest": {
         "type": "object",
-        "description": "Payment data object. Can be the full payload with authorization, signature, domain, types, or a simplified object with payment details.",
+        "required": ["userId", "usdAmount"],
+        "description": "Payment data for settling a transaction from user's vault.",
         "properties": {
-          "payload": {
-            "type": "object",
-            "description": "Full EIP-712 payload (optional, if provided must include authorization, signature, domain, types)",
-            "properties": {
-              "authorization": {
-                "type": "object",
-                "required": [
-                  "from",
-                  "to",
-                  "value",
-                  "validAfter",
-                  "validBefore",
-                  "nonce"
-                ],
-                "properties": {
-                  "from": {
-                    "type": "string",
-                    "description": "Payment address of the sender (username@resolverName or wallet address)"
-                  },
-                  "to": {
-                    "type": "string",
-                    "description": "Payment address or wallet address of the recipient"
-                  },
-                  "value": {
-                    "type": "string",
-                    "description": "Amount in smallest unit (e.g., for USDC with 6 decimals, 1000000 = 1 USDC)"
-                  },
-                  "validAfter": {
-                    "type": "integer",
-                    "description": "Unix timestamp after which the authorization is valid"
-                  },
-                  "validBefore": {
-                    "type": "integer",
-                    "description": "Unix timestamp before which the authorization is valid"
-                  },
-                  "nonce": {
-                    "type": "string",
-                    "description": "Unique nonce for the transaction (bytes32)"
-                  },
-                  "destinationChainID": {
-                    "type": "integer",
-                    "description": "Destination chain ID (optional, will use user preferences if not provided)"
-                  },
-                  "destinationToken": {
-                    "type": "string",
-                    "description": "Destination token symbol (optional, will use user preferences if not provided)"
-                  }
-                }
-              },
-              "signature": {
-                "type": "string",
-                "description": "EIP-712 signature of the authorization"
-              },
-              "domain": {
-                "type": "object",
-                "required": ["name", "version", "chainId"],
-                "properties": {
-                  "name": { "type": "string" },
-                  "version": { "type": "string" },
-                  "chainId": { "type": "integer" }
-                }
-              },
-              "types": {
-                "type": "object",
-                "description": "EIP-712 type definitions"
-              }
-            }
+          "userId": {
+            "type": "string",
+            "description": "User ID of the sender"
+          },
+          "usdAmount": {
+            "type": "number",
+            "description": "Amount in USD to settle"
+          },
+          "destinationPaymentAddress": {
+            "type": "string",
+            "description": "Destination payment address (username@resolverName)"
+          },
+          "destinationWallet": {
+            "type": "string",
+            "description": "Destination wallet address"
+          },
+          "destinationChainID": {
+            "type": "integer",
+            "description": "Destination chain ID (optional, will use user preferences if not provided)"
+          },
+          "destinationToken": {
+            "type": "string",
+            "description": "Destination token symbol (optional, will use user preferences if not provided)"
           }
         }
       },
@@ -530,11 +483,10 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["userId", "username", "partnerId"],
+                "required": ["userId", "username"],
                 "properties": {
                   "userId": { "type": "string" },
-                  "username": { "type": "string" },
-                  "partnerId": { "type": "string" }
+                  "username": { "type": "string" }
                 }
               }
             }
@@ -581,8 +533,9 @@
         "summary": "Fetch user by identifier",
         "tags": ["User Accounts"],
         "parameters": [
-          { "name": "userId", "in": "query", "schema": { "type": "string" } },
-          { "name": "username", "in": "query", "schema": { "type": "string" } }
+          { "name": "userId", "in": "query", "schema": { "type": "string" }, "description": "User ID" },
+          { "name": "username", "in": "query", "schema": { "type": "string" }, "description": "Username" },
+          { "name": "walletAddress", "in": "query", "schema": { "type": "string" }, "description": "Wallet address" }
         ],
         "responses": {
           "200": {
@@ -623,11 +576,6 @@
             "name": "username",
             "in": "query",
             "required": true,
-            "schema": { "type": "string" }
-          },
-          {
-            "name": "partnerId",
-            "in": "query",
             "schema": { "type": "string" }
           },
           { "name": "userId", "in": "query", "schema": { "type": "string" } }
@@ -1360,7 +1308,7 @@
             }
           },
           "400": {
-            "description": "Invalid payload - partnerId (string) and amount (number) are required",
+            "description": "Invalid payload - amount (number) is required",
             "headers": {
               "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
             },
@@ -1920,6 +1868,149 @@
           },
           "500": {
             "description": "Internal server error or Gasyard API error",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            }
+          }
+        }
+      }
+    },
+    "/sdk/v1/link-wallet": {
+      "post": {
+        "summary": "Link or replace a wallet address for a user",
+        "description": "Updates or replaces an existing address for the specified chainType. The isReplace flag must be true.",
+        "tags": ["User Accounts"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["userId", "address", "chainType", "isReplace"],
+                "properties": {
+                  "userId": {
+                    "type": "string",
+                    "description": "User ID"
+                  },
+                  "address": {
+                    "type": "string",
+                    "description": "New wallet address"
+                  },
+                  "chainType": {
+                    "type": "string",
+                    "enum": ["evm", "solana", "aptos"],
+                    "description": "Chain type for the address"
+                  },
+                  "isReplace": {
+                    "type": "boolean",
+                    "description": "Must be true to replace an existing address"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Address updated successfully",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/SDKResponse" },
+                    {
+                      "properties": {
+                        "data": { "$ref": "#/components/schemas/UserAccount" }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error - userId, address, chainType, and isReplace=true are required",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            }
+          },
+          "404": {
+            "description": "User not found",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            }
+          }
+        }
+      }
+    },
+    "/sdk/v1/update-preferrences": {
+      "post": {
+        "summary": "Update user's preferred settlement preferences",
+        "description": "Update the user's preferred settlement type (vault/eoa) and/or preferred settlement chain and token.",
+        "tags": ["User Accounts"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["userId"],
+                "properties": {
+                  "userId": {
+                    "type": "string",
+                    "description": "User ID"
+                  },
+                  "preferredSettlement": {
+                    "type": "string",
+                    "enum": ["vault", "eoa"],
+                    "description": "Preferred settlement type - 'vault' for Safe vault or 'eoa' for externally owned account"
+                  },
+                  "preferredSettlementChain": {
+                    "type": "integer",
+                    "description": "Preferred settlement chain ID"
+                  },
+                  "preferredSettlementToken": {
+                    "type": "string",
+                    "description": "Preferred settlement token symbol (e.g., 'USDC')"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Preferences updated successfully",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/SDKResponse" },
+                    {
+                      "properties": {
+                        "success": { "type": "boolean" },
+                        "message": { "type": "string" }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error - userId is required, preferredSettlement must be vault or eoa",
+            "headers": {
+              "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
+            }
+          },
+          "404": {
+            "description": "User not found",
             "headers": {
               "X-Request-Id": { "$ref": "#/components/headers/RequestId" }
             }
